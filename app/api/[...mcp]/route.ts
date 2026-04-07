@@ -121,7 +121,25 @@ const handler = createMcpHandler(
       }
     );
 
-    // ── 5. Pesquisa nas conversas ────────────────────────────────────────
+    // ── 5. Guardar estado da sessão ──────────────────────────────────────
+    server.tool(
+      "save_session_state",
+      "Guarda o estado actual da sessão CLAUDIUS no Supabase (pendentes, decisões tomadas, foco). Usar ao fechar sessão no iPhone para garantir continuidade na próxima sessão no Mac ou noutro dispositivo.",
+      { content: z.string().min(1) },
+      async ({ content }) => {
+        await fetch(`${PAL_API}/memory`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${PAL_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ key: "current_session_state", value: content }),
+        });
+        return { content: [{ type: "text", text: "✅ Estado guardado no Supabase. Disponível na próxima sessão em qualquer dispositivo." }] };
+      }
+    );
+
+    // ── 6. Pesquisa nas conversas ────────────────────────────────────────
     server.tool(
       "search_conversations",
       "Pesquisa semântica nas 1448 conversas CLAUDIUS (ChatGPT + Claude) guardadas no Supabase.",
