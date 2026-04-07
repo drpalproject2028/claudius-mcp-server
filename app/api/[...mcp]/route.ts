@@ -186,4 +186,17 @@ async function withCors(req: Request) {
   return next;
 }
 
-export { withCors as GET, withCors as POST, withCors as DELETE };
+export async function GET(req: Request) {
+  const accept = req.headers.get("accept") ?? "";
+  // SSE or Streamable HTTP GET — let mcp-handler deal with it
+  if (accept.includes("text/event-stream") || accept.includes("application/json")) {
+    return withCors(req);
+  }
+  // Health check (usado pelo Claude.ai para verificar se o servidor está vivo)
+  return new Response(
+    JSON.stringify({ server: "claudius-mcp-admin", version: "1.0.0", status: "ok" }),
+    { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
+  );
+}
+
+export { withCors as POST, withCors as DELETE };
