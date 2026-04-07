@@ -169,4 +169,21 @@ const handler = createMcpHandler(
   { basePath: "/api", maxDuration: 60 }
 );
 
-export { handler as GET, handler as POST, handler as DELETE };
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept, Mcp-Session-Id",
+};
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS });
+}
+
+async function withCors(req: Request) {
+  const res = await handler(req);
+  const next = new Response(res.body, res);
+  Object.entries(CORS).forEach(([k, v]) => next.headers.set(k, v));
+  return next;
+}
+
+export { withCors as GET, withCors as POST, withCors as DELETE };
