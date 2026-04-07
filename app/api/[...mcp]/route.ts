@@ -2,8 +2,7 @@ import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
 
 const PAL_API = "https://btkdpjlltekssobfzdhu.supabase.co/functions/v1/pal-api";
-const PAL_KEY = process.env.PAL_API_KEY!;
-const MCP_SECRET = process.env.MCP_SECRET!;
+const PAL_KEY = process.env.PAL_API_KEY ?? "pal-2026-claudius";
 
 const SITES = [
   { name: "CLAUDIUS Dashboards", url: "https://claudius-dashboards.vercel.app" },
@@ -152,32 +151,4 @@ const handler = createMcpHandler(
   { basePath: "/api", maxDuration: 60 }
 );
 
-// Verificação simples de token para proteger o servidor
-async function authMiddleware(req: Request) {
-  if (MCP_SECRET) {
-    const auth = req.headers.get("authorization") ?? "";
-    const token = auth.replace("Bearer ", "").trim();
-    if (token !== MCP_SECRET) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-  }
-  return null;
-}
-
-export async function GET(req: Request) {
-  const denied = await authMiddleware(req);
-  if (denied) return denied;
-  return handler(req);
-}
-
-export async function POST(req: Request) {
-  const denied = await authMiddleware(req);
-  if (denied) return denied;
-  return handler(req);
-}
-
-export async function DELETE(req: Request) {
-  const denied = await authMiddleware(req);
-  if (denied) return denied;
-  return handler(req);
-}
+export { handler as GET, handler as POST, handler as DELETE };
