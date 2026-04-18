@@ -3,6 +3,8 @@ import { z } from "zod";
 
 const PAL_API = "https://btkdpjlltekssobfzdhu.supabase.co/functions/v1/pal-api";
 const PAL_KEY = process.env.PAL_API_KEY ?? "pal-2026-claudius";
+const SUPA_URL = "https://btkdpjlltekssobfzdhu.supabase.co";
+const SUPA_ANON = process.env.SUPABASE_ANON_KEY ?? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ0a2RwamxsdGVrc3NvYmZ6ZGh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzA4ODgsImV4cCI6MjA4NjI0Njg4OH0.6IwYG23OD9Rh2fpVMlGiaZy77d3CKczpudIzjZ9dEZM";
 
 const SITES = [
   { name: "CLAUDIUS Dashboards", url: "https://claudius-dashboards.vercel.app" },
@@ -139,19 +141,28 @@ const handler = createMcpHandler(
       }
     );
 
-    // ── 6. Pesquisa nas conversas ────────────────────────────────────────
+    // ── 6. Pesquisa nas conversas (full-text via RPC semantic_search) ───
     server.tool(
       "search_conversations",
       "Pesquisa semântica nas 1448 conversas CLAUDIUS (ChatGPT + Claude) guardadas no Supabase.",
       { query: z.string().min(2) },
       async ({ query }) => {
-        const data = await palFetch(
-          `/search?q=${encodeURIComponent(query)}&limit=5`
-        );
-        const results = (data.results ?? [])
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/semantic_search`, {
+          method: "POST",
+          headers: {
+            apikey: SUPA_ANON,
+            Authorization: `Bearer ${SUPA_ANON}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ query_text: query, match_count: 8 }),
+        });
+        const rows = await res.json();
+        const results = (Array.isArray(rows) ? rows : [])
           .map(
-            (r: { title: string; snippet: string; source: string }) =>
-              `**${r.title}** (${r.source})\n${r.snippet}`
+            (r: { title: string; source: string; search_text?: string; similarity: number }) => {
+              const snippet = (r.search_text ?? "").substring(0, 200);
+              return `**${r.title}** (${r.source}, score: ${r.similarity.toFixed(3)})\n${snippet}`;
+            }
           )
           .join("\n\n---\n\n");
         return {
