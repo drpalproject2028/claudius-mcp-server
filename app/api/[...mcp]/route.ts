@@ -5,6 +5,7 @@ const PAL_API = "https://btkdpjlltekssobfzdhu.supabase.co/functions/v1/pal-api";
 const PAL_KEY = process.env.PAL_API_KEY ?? "pal-2026-claudius";
 const SUPA_URL = "https://btkdpjlltekssobfzdhu.supabase.co";
 const SUPA_ANON = process.env.SUPABASE_ANON_KEY ?? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ0a2RwamxsdGVrc3NvYmZ6ZGh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzA4ODgsImV4cCI6MjA4NjI0Njg4OH0.6IwYG23OD9Rh2fpVMlGiaZy77d3CKczpudIzjZ9dEZM";
+const OPENAI_KEY = process.env.OPENAI_API_KEY ?? "";
 
 const SITES = [
   { name: "CLAUDIUS Dashboards", url: "https://claudius-dashboards.vercel.app" },
@@ -141,38 +142,47 @@ const handler = createMcpHandler(
       }
     );
 
-    // ── 6. Pesquisa nas conversas (full-text via RPC semantic_search) ───
+    // ── 6. Pesquisa nas conversas (vectorial via OpenAI + pgvector) ────
     server.tool(
       "search_conversations",
-      "Pesquisa semântica nas 1448 conversas CLAUDIUS (ChatGPT + Claude) guardadas no Supabase.",
+      "Pesquisa semântica nas 1495 conversas CLAUDIUS (ChatGPT + Claude) guardadas no Supabase. Usa embeddings vectoriais para encontrar resultados conceptualmente próximos.",
       { query: z.string().min(2) },
       async ({ query }) => {
-        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/semantic_search`, {
+        if (!OPENAI_KEY) {
+          const ftRes = await fetch(`${SUPA_URL}/rest/v1/rpc/semantic_search`, {
+            method: "POST",
+            headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ query_text: query, match_count: 8 }),
+          });
+          const ftRows = await ftRes.json();
+          const ftResults = (Array.isArray(ftRows) ? ftRows : [])
+            .map((r: { title: string; source: string; search_text?: string; similarity: number }) =>
+              `**${r.title}** (${r.source}, score: ${r.similarity.toFixed(3)})\n${(r.search_text ?? "").substring(0, 200)}`
+            ).join("\n\n---\n\n");
+          return { content: [{ type: "text", text: ftResults || "Sem resultados." }] };
+        }
+        const embRes = await fetch("https://api.openai.com/v1/embeddings", {
           method: "POST",
-          headers: {
-            apikey: SUPA_ANON,
-            Authorization: `Bearer ${SUPA_ANON}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ query_text: query, match_count: 8 }),
+          headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ input: query, model: "text-embedding-3-small" }),
+        });
+        const embData = await embRes.json();
+        const embedding = embData?.data?.[0]?.embedding;
+        if (!embedding) {
+          return { content: [{ type: "text", text: "Erro ao gerar embedding para a query." }] };
+        }
+        const vecStr = "[" + embedding.join(",") + "]";
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/search_conversations_semantic`, {
+          method: "POST",
+          headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query_embedding: vecStr, match_count: 8, similarity_threshold: 0.2 }),
         });
         const rows = await res.json();
         const results = (Array.isArray(rows) ? rows : [])
-          .map(
-            (r: { title: string; source: string; search_text?: string; similarity: number }) => {
-              const snippet = (r.search_text ?? "").substring(0, 200);
-              return `**${r.title}** (${r.source}, score: ${r.similarity.toFixed(3)})\n${snippet}`;
-            }
-          )
-          .join("\n\n---\n\n");
-        return {
-          content: [
-            {
-              type: "text",
-              text: results || "Sem resultados para essa pesquisa.",
-            },
-          ],
-        };
+          .map((r: { title: string; source: string; similarity: number; first_message_at?: string }) =>
+            `**${r.title}** (${r.source}, similarity: ${r.similarity.toFixed(3)}, ${(r.first_message_at ?? "").substring(0, 10)})`
+          ).join("\n\n---\n\n");
+        return { content: [{ type: "text", text: results || "Sem resultados para essa pesquisa." }] };
       }
     );
   },
