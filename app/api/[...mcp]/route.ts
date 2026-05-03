@@ -185,6 +185,69 @@ const handler = createMcpHandler(
         return { content: [{ type: "text", text: results || "Sem resultados para essa pesquisa." }] };
       }
     );
+
+    // ── 7. Concept Query — Ciclo de vida dos conceitos (Camada 2) ───────
+    server.tool(
+      "concept_query",
+      "Consulta o ciclo de vida dos conceitos CLAUDIUS (Camada 2 da memória composta). Modos: lifecycle (estado actual), evidence (snippets), relations (co-ocorrências), timeline (série mensal). Exemplos: 'Quando nasceu PALCORE?', 'Que conceitos estão dormentes?', 'Evolução do wardrobe-emanuel'.",
+      {
+        concept_path: z.string().describe("Caminho do conceito (ex: /RESSONANCIA/sistema/palcore) ou wildcard (* para todos, /RESSONANCIA/sistema/* para um ramo)"),
+        mode: z.enum(["lifecycle", "evidence", "relations", "timeline"]).default("lifecycle"),
+      },
+      async ({ concept_path, mode }) => {
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/claudius_concept_query`, {
+          method: "POST",
+          headers: {
+            apikey: SUPA_ANON,
+            Authorization: `Bearer ${SUPA_ANON}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ p_concept_path: concept_path, p_mode: mode }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return { content: [{ type: "text", text: `Erro: ${JSON.stringify(data)}` }] };
+        }
+        const rows = Array.isArray(data) ? data : [data];
+        if (!rows.length || rows[0] === null) {
+          return { content: [{ type: "text", text: "Nenhum conceito encontrado para esse caminho." }] };
+        }
+        const text = JSON.stringify(rows, null, 2);
+        return { content: [{ type: "text", text: text.substring(0, 8000) }] };
+      }
+    );
+
+    // ── 8. Concept Status Summary ────────────────────────────────────────
+    server.tool(
+      "concept_status",
+      "Resumo rápido do estado da Camada 2: quantos conceitos alive/dormant/born/unborn, top 10 mais frequentes, últimas transições de estado.",
+      {},
+      async () => {
+        const res = await fetch(`${SUPA_URL}/rest/v1/concept_lifecycle?select=status,occurrences_total,concept_path,display_name,born_at,last_seen_at`, {
+          headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
+        });
+        const rows: Array<{status:string;occurrences_total:number;concept_path:string;display_name:string;born_at:string;last_seen_at:string}> = await res.json();
+        const counts: Record<string, number> = {};
+        rows.forEach(r => { counts[r.status] = (counts[r.status] ?? 0) + 1; });
+        const top10 = rows
+          .filter(r => r.occurrences_total > 0)
+          .sort((a, b) => b.occurrences_total - a.occurrences_total)
+          .slice(0, 10)
+          .map(r => `  ${r.occurrences_total.toString().padStart(4)} ${r.display_name} [${r.status}]`);
+        const summary = [
+          "## CLAUDIUS Concept Lifecycle — Estado",
+          "",
+          "**Contadores por status:**",
+          ...Object.entries(counts).map(([s, n]) => `  ${s}: ${n}`),
+          "",
+          "**Top 10 conceitos:**",
+          ...top10,
+          "",
+          `**Total:** ${rows.length} conceitos`,
+        ].join("\n");
+        return { content: [{ type: "text", text: summary }] };
+      }
+    );
   },
   {},
   { basePath: "/api", maxDuration: 60 }
