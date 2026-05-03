@@ -217,33 +217,52 @@ const handler = createMcpHandler(
       }
     );
 
-    // ── 8. Concept Status Summary ────────────────────────────────────────
+    // ── 8. Concept Status Summary (via SECURITY DEFINER RPC) ─────────────
     server.tool(
       "concept_status",
-      "Resumo rápido do estado da Camada 2: quantos conceitos alive/dormant/born/unborn, top 10 mais frequentes, últimas transições de estado.",
+      "Resumo rápido do estado da Camada 2: quantos conceitos alive/dormant/born/unborn, top 10 mais frequentes, último pulse.",
       {},
       async () => {
-        const res = await fetch(`${SUPA_URL}/rest/v1/concept_lifecycle?select=status,occurrences_total,concept_path,display_name,born_at,last_seen_at`, {
-          headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` },
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/claudius_concept_status_summary`, {
+          method: "POST",
+          headers: {
+            apikey: SUPA_ANON,
+            Authorization: `Bearer ${SUPA_ANON}`,
+            "Content-Type": "application/json",
+          },
+          body: "{}",
         });
-        const rows: Array<{status:string;occurrences_total:number;concept_path:string;display_name:string;born_at:string;last_seen_at:string}> = await res.json();
-        const counts: Record<string, number> = {};
-        rows.forEach(r => { counts[r.status] = (counts[r.status] ?? 0) + 1; });
-        const top10 = rows
-          .filter(r => r.occurrences_total > 0)
-          .sort((a, b) => b.occurrences_total - a.occurrences_total)
-          .slice(0, 10)
-          .map(r => `  ${r.occurrences_total.toString().padStart(4)} ${r.display_name} [${r.status}]`);
+        if (!res.ok) {
+          const err = await res.text();
+          return { content: [{ type: "text", text: `Erro: ${err}` }] };
+        }
+        const data: {
+          counts: Record<string, number>;
+          top10: Array<{
+            concept_path: string;
+            display_name: string;
+            status: string;
+            occurrences_total: number;
+            born_at: string;
+            last_seen_at: string;
+          }>;
+          total: number;
+          last_pulse: string | null;
+        } = await res.json();
+        const top10 = data.top10.map(
+          r => `  ${r.occurrences_total.toString().padStart(4)} ${r.display_name} [${r.status}]`
+        );
         const summary = [
           "## CLAUDIUS Concept Lifecycle — Estado",
           "",
           "**Contadores por status:**",
-          ...Object.entries(counts).map(([s, n]) => `  ${s}: ${n}`),
+          ...Object.entries(data.counts).map(([s, n]) => `  ${s}: ${n}`),
           "",
           "**Top 10 conceitos:**",
           ...top10,
           "",
-          `**Total:** ${rows.length} conceitos`,
+          `**Total:** ${data.total} conceitos`,
+          `**Último pulse:** ${data.last_pulse ?? "—"}`,
         ].join("\n");
         return { content: [{ type: "text", text: summary }] };
       }
