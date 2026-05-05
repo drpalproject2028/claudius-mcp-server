@@ -267,6 +267,106 @@ const handler = createMcpHandler(
         return { content: [{ type: "text", text: summary }] };
       }
     );
+    const parseRpcResponse = async (res: Response): Promise<string> => {
+      const ct = res.headers.get("content-type") ?? "";
+      if (res.status === 204) return "OK (204 No Content)";
+      const text = await res.text();
+      if (!ct.includes("application/json") || !text) return (text || "OK").substring(0, 8000);
+      try {
+        const parsed = JSON.parse(text);
+        return JSON.stringify(parsed, null, 2).substring(0, 8000);
+      } catch {
+        return text.substring(0, 8000);
+      }
+    };
+
+    // ── 9. start_session — Inicia sessão CLAUDIUS (protocolo v4.0) ──────
+    server.tool(
+      "start_session",
+      "Inicia uma nova sessão CLAUDIUS via RPC claudius_inicio (protocolo v4.0). Devolve session_id (necessário para update_session e end_session), últimas 5 sessões e pendentes abertos nos últimos 14 dias.",
+      {
+        instance: z.enum([
+          "claude-code-sonnet",
+          "claude-code-opus",
+          "claude-opus-4-7-web",
+          "claude-desktop",
+          "cowork",
+          "claude-ai-ios",
+          "claude-ai-web",
+        ]).describe("Nome canónico da instância. iPhone Claude.ai = 'claude-ai-ios'. Browser desktop = 'claude-ai-web'."),
+        focus: z.string().trim().max(500).optional().describe("Tema/foco principal da sessão (curto, ex: 'auditoria-mcp')"),
+      },
+      async ({ instance, focus }) => {
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/claudius_inicio`, {
+          method: "POST",
+          headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ p_instance: instance, p_focus: focus ?? null }),
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          return { content: [{ type: "text", text: `Erro: ${err.substring(0, 8000)}` }] };
+        }
+        return { content: [{ type: "text", text: await parseRpcResponse(res) }] };
+      }
+    );
+
+    // ── 10. update_session — Adiciona nota à sessão actual ──────────────
+    server.tool(
+      "update_session",
+      "Adiciona uma nota factual à sessão CLAUDIUS actual via RPC claudius_update.",
+      {
+        session_id: z.number().int().positive().describe("ID devolvido por start_session"),
+        nota: z.string().trim().min(1).max(2000).describe("Nota curta e factual (ex: 'Criado workflow n8n IFRa2H... para BCP')"),
+      },
+      async ({ session_id, nota }) => {
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/claudius_update`, {
+          method: "POST",
+          headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ p_session_id: session_id, p_nota: nota }),
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          return { content: [{ type: "text", text: `Erro: ${err.substring(0, 8000)}` }] };
+        }
+        return { content: [{ type: "text", text: await parseRpcResponse(res) }] };
+      }
+    );
+
+    // ── 11. end_session — Fecha a sessão actual ─────────────────────────
+    server.tool(
+      "end_session",
+      "Fecha a sessão CLAUDIUS actual via RPC claudius_fim. Persiste decisões, artefactos, pendentes e resumo.",
+      {
+        session_id: z.number().int().positive().describe("ID devolvido por start_session"),
+        decisions: z.array(z.string().trim().min(1).max(500)).default([]).describe("Lista de decisões tomadas na sessão"),
+        artifacts: z.array(z.string().trim().min(1).max(500)).default([]).describe("Lista de ficheiros/URLs/artefactos criados"),
+        pending: z.array(z.object({
+          id: z.string().trim().min(1),
+          acao: z.string().trim().min(1),
+          prioridade: z.string().optional(),
+        })).default([]).describe("Lista de pendentes abertos para próxima sessão"),
+        resumo: z.string().trim().min(1).max(2000).optional().describe("Resumo em 1-3 linhas do que foi feito"),
+      },
+      async ({ session_id, decisions, artifacts, pending, resumo }) => {
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/claudius_fim`, {
+          method: "POST",
+          headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            p_session_id: session_id,
+            p_decisions: decisions,
+            p_artifacts: artifacts,
+            p_pending: pending,
+            p_resumo: resumo ?? null,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          return { content: [{ type: "text", text: `Erro: ${err.substring(0, 8000)}` }] };
+        }
+        return { content: [{ type: "text", text: await parseRpcResponse(res) }] };
+      }
+    );
+
   },
   {},
   { basePath: "/api", maxDuration: 60 }
