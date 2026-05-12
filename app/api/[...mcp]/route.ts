@@ -1,5 +1,13 @@
 import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
+import {
+  ACCOUNT_EMAILS,
+  getActiveToken,
+  gmailApi,
+  listActiveAccounts,
+} from "../../../lib/gmail";
+
+const ACCOUNT_ENUM = ["paulo.branco", "drpalproject2028", "omestredenada", "dc4.portobaixa"] as const;
 
 const PAL_API = "https://btkdpjlltekssobfzdhu.supabase.co/functions/v1/pal-api";
 const PAL_KEY = process.env.PAL_API_KEY ?? "pal-2026-claudius";
@@ -364,6 +372,177 @@ const handler = createMcpHandler(
           return { content: [{ type: "text", text: `Erro: ${err.substring(0, 8000)}` }] };
         }
         return { content: [{ type: "text", text: await parseRpcResponse(res) }] };
+      }
+    );
+
+    // ── 12. gmail_list_accounts — contas Gmail autorizadas ───────────────
+    server.tool(
+      "gmail_list_accounts",
+      "Lista contas Gmail autorizadas no servidor (paulo.branco, drpalproject2028, omestredenada, dc4.portobaixa) — sem expor tokens. Mostra email, quando foi autorizada, quando foi usada pela última vez e minutos até expirar.",
+      {},
+      async () => {
+        try {
+          const accounts = await listActiveAccounts();
+          if (!accounts.length) {
+            const authUrls = Object.keys(ACCOUNT_EMAILS).map(a => `  /auth/gmail/start?account=${a}`).join("\n");
+            return { content: [{ type: "text", text: `Nenhuma conta autorizada ainda. Para autorizar:\n${authUrls}` }] };
+          }
+          const lines = accounts.map(a =>
+            `• ${a.account} (${a.email}) — autorizada ${a.authorized_at?.substring(0, 10)}, último uso ${a.last_used_at?.substring(0, 16) ?? "nunca"}, expira em ${a.expires_in_min}min`
+          );
+          return { content: [{ type: "text", text: lines.join("\n") }] };
+        } catch (e) {
+          return { content: [{ type: "text", text: `Erro: ${(e as Error).message}` }] };
+        }
+      }
+    );
+
+    // ── 13. gmail_search — pesquisa numa conta específica ────────────────
+    server.tool(
+      "gmail_search",
+      "Pesquisa threads em UMA conta Gmail específica usando query Gmail (operadores: from:, to:, subject:, after:YYYY/MM/DD, before:, has:attachment, label:, etc.). Devolve sender, subject, snippet, data.",
+      {
+        account: z.enum(ACCOUNT_ENUM).describe("Conta a pesquisar"),
+        query: z.string().min(1).describe("Query Gmail (ex: 'from:billing@stripe.com after:2025/08/01')"),
+        limit: z.number().int().min(1).max(50).default(15),
+      },
+      async ({ account, query, limit }) => {
+        try {
+          const listRes = await gmailApi(account, `/threads?q=${encodeURIComponent(query)}&maxResults=${limit}`);
+          if (!listRes.ok) {
+            const err = await listRes.text();
+            return { content: [{ type: "text", text: `Erro Gmail API ${listRes.status}: ${err.substring(0, 400)}` }] };
+          }
+          const list = await listRes.json() as { threads?: Array<{ id: string }> };
+          const threads = list.threads ?? [];
+          if (!threads.length) {
+            return { content: [{ type: "text", text: `Sem resultados em ${account} para: ${query}` }] };
+          }
+          // Para cada thread, ir buscar metadata da última mensagem
+          const details = await Promise.all(
+            threads.slice(0, limit).map(async t => {
+              const r = await gmailApi(account, `/threads/${t.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`);
+              if (!r.ok) return null;
+              const td = await r.json() as { id: string; messages?: Array<{ id: string; snippet?: string; payload?: { headers?: Array<{ name: string; value: string }> } }> };
+              const last = td.messages?.[td.messages.length - 1];
+              const headers = last?.payload?.headers ?? [];
+              const get = (n: string) => headers.find(h => h.name.toLowerCase() === n.toLowerCase())?.value ?? "";
+              return {
+                id: td.id,
+                from: get("From"),
+                subject: get("Subject"),
+                date: get("Date"),
+                snippet: last?.snippet ?? "",
+              };
+            })
+          );
+          const rows = details.filter(Boolean) as NonNullable<typeof details[number]>[];
+          const text = rows.map(r => `• ${r.date}\n  ${r.from}\n  ${r.subject}\n  ${r.snippet.substring(0, 160)}\n  id=${r.id}`).join("\n\n");
+          return { content: [{ type: "text", text: `${rows.length} resultados em ${account} para "${query}":\n\n${text}` }] };
+        } catch (e) {
+          return { content: [{ type: "text", text: `Erro: ${(e as Error).message}` }] };
+        }
+      }
+    );
+
+    // ── 14. gmail_get_thread — corpo completo de uma thread ──────────────
+    server.tool(
+      "gmail_get_thread",
+      "Lê o corpo completo (todas as mensagens, plain text body) de uma thread Gmail numa conta específica.",
+      {
+        account: z.enum(ACCOUNT_ENUM),
+        thread_id: z.string().min(5),
+      },
+      async ({ account, thread_id }) => {
+        try {
+          const r = await gmailApi(account, `/threads/${thread_id}?format=full`);
+          if (!r.ok) {
+            const err = await r.text();
+            return { content: [{ type: "text", text: `Erro Gmail API ${r.status}: ${err.substring(0, 400)}` }] };
+          }
+          const td = await r.json() as {
+            id: string;
+            messages?: Array<{
+              id: string;
+              snippet?: string;
+              payload?: {
+                headers?: Array<{ name: string; value: string }>;
+                body?: { data?: string };
+                parts?: Array<{ mimeType: string; body?: { data?: string }; parts?: unknown[] }>;
+              };
+            }>;
+          };
+          const extractText = (payload: NonNullable<typeof td.messages>[number]["payload"]): string => {
+            if (!payload) return "";
+            if (payload.body?.data) return Buffer.from(payload.body.data, "base64").toString("utf-8");
+            for (const p of payload.parts ?? []) {
+              if (p.mimeType === "text/plain" && p.body?.data) {
+                return Buffer.from(p.body.data, "base64").toString("utf-8");
+              }
+            }
+            for (const p of payload.parts ?? []) {
+              if (p.mimeType === "text/html" && p.body?.data) {
+                return Buffer.from(p.body.data, "base64").toString("utf-8")
+                  .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+              }
+            }
+            return "";
+          };
+          const blocks = (td.messages ?? []).map((m, i) => {
+            const h = m.payload?.headers ?? [];
+            const g = (n: string) => h.find(x => x.name.toLowerCase() === n.toLowerCase())?.value ?? "";
+            return `=== Mensagem ${i + 1} ===\nFrom: ${g("From")}\nDate: ${g("Date")}\nSubject: ${g("Subject")}\n\n${extractText(m.payload).substring(0, 4000)}`;
+          });
+          return { content: [{ type: "text", text: blocks.join("\n\n") }] };
+        } catch (e) {
+          return { content: [{ type: "text", text: `Erro: ${(e as Error).message}` }] };
+        }
+      }
+    );
+
+    // ── 15. gmail_unified_search — pesquisa em TODAS as contas autorizadas em paralelo ─
+    server.tool(
+      "gmail_unified_search",
+      "Pesquisa a mesma query Gmail em TODAS as contas autorizadas em paralelo. Devolve resultados agrupados por conta. Útil para encontrar invoices/recibos cross-account, ver pegada total de uma pessoa, etc.",
+      {
+        query: z.string().min(1),
+        limit_per_account: z.number().int().min(1).max(20).default(10),
+      },
+      async ({ query, limit_per_account }) => {
+        try {
+          const accounts = await listActiveAccounts();
+          if (!accounts.length) {
+            return { content: [{ type: "text", text: "Nenhuma conta autorizada. Usa /auth/gmail/start?account=X primeiro." }] };
+          }
+          const perAccount = await Promise.all(accounts.map(async acc => {
+            try {
+              const r = await gmailApi(acc.account, `/threads?q=${encodeURIComponent(query)}&maxResults=${limit_per_account}`);
+              if (!r.ok) return { account: acc.account, error: `${r.status}`, results: [] as Array<{ from: string; subject: string; date: string }> };
+              const list = await r.json() as { threads?: Array<{ id: string }> };
+              const threads = (list.threads ?? []).slice(0, limit_per_account);
+              const details = await Promise.all(threads.map(async t => {
+                const dr = await gmailApi(acc.account, `/threads/${t.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`);
+                if (!dr.ok) return null;
+                const td = await dr.json() as { messages?: Array<{ snippet?: string; payload?: { headers?: Array<{ name: string; value: string }> } }> };
+                const last = td.messages?.[td.messages.length - 1];
+                const h = last?.payload?.headers ?? [];
+                const g = (n: string) => h.find(x => x.name.toLowerCase() === n.toLowerCase())?.value ?? "";
+                return { from: g("From"), subject: g("Subject"), date: g("Date") };
+              }));
+              return { account: acc.account, results: details.filter(Boolean) as Array<{ from: string; subject: string; date: string }> };
+            } catch (e) {
+              return { account: acc.account, error: (e as Error).message, results: [] as Array<{ from: string; subject: string; date: string }> };
+            }
+          }));
+          const blocks = perAccount.map(a => {
+            const head = `## ${a.account} (${a.results.length} resultados${'error' in a && a.error ? `, erro: ${a.error}` : ""})`;
+            const body = a.results.map(r => `  • ${r.date?.substring(0, 16)} — ${r.from}\n    ${r.subject}`).join("\n");
+            return body ? `${head}\n${body}` : head;
+          });
+          return { content: [{ type: "text", text: blocks.join("\n\n") }] };
+        } catch (e) {
+          return { content: [{ type: "text", text: `Erro: ${(e as Error).message}` }] };
+        }
       }
     );
 
