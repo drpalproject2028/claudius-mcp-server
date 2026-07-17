@@ -546,6 +546,96 @@ const handler = createMcpHandler(
       }
     );
 
+    // ── 16. conversation_timeline — ORÁCULO: cronologia/estatísticas ────
+    server.tool(
+      "conversation_timeline",
+      "Perguntas cronológicas/exactas ou estatísticas sobre as 1616+ conversas CLAUDIUS (chatgpt+claude): primeira/última conversa, conversas num intervalo de datas, contagens totais/por mês/por fonte. NÃO usar search_conversations para isto (é semântica, não cronológica). Para ciclo de vida de conceitos usa concept_query.",
+      {
+        mode: z.enum(["first", "between", "stats"]).describe(
+          "first = primeiras N conversas por ordem cronológica (usa 'n'); between = conversas num intervalo de datas (usa d_from/d_to/source); stats = contagens totais, por mês e por fonte"
+        ),
+        n: z.number().int().min(1).max(50).default(5).describe("Nº de conversas a devolver, só em mode=first"),
+        d_from: z.string().datetime().optional().describe("ISO 8601, início do intervalo, só em mode=between"),
+        d_to: z.string().datetime().optional().describe("ISO 8601, fim do intervalo, só em mode=between"),
+        source: z.enum(["chatgpt", "claude"]).optional().describe("Filtro de fonte, só em mode=between"),
+      },
+      async ({ mode, n, d_from, d_to, source }) => {
+        let rpc: string;
+        let body: Record<string, unknown>;
+        if (mode === "first") {
+          rpc = "oraculo_first_conversations";
+          body = { n };
+        } else if (mode === "between") {
+          if (!d_from || !d_to) {
+            return { content: [{ type: "text", text: "mode=between requer d_from e d_to (ISO 8601)." }] };
+          }
+          rpc = "oraculo_between";
+          body = { d_from, d_to, src: source ?? null };
+        } else {
+          rpc = "oraculo_stats";
+          body = {};
+        }
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/${rpc}`, {
+          method: "POST",
+          headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          return { content: [{ type: "text", text: `Erro: ${err.substring(0, 2000)}` }] };
+        }
+        return { content: [{ type: "text", text: await parseRpcResponse(res) }] };
+      }
+    );
+
+    // ── 17. conversation_fetch — ORÁCULO: texto ipsis verbis ────────────
+    server.tool(
+      "conversation_fetch",
+      "Texto exacto/ipsis verbis de uma conversa CLAUDIUS específica, por id (uuid) ou por padrão de título (ILIKE, devolve até 3 matches). Usar quando é preciso citar palavra-por-palavra, não resumir.",
+      {
+        conv_id: z.string().uuid().optional().describe("ID exacto da conversa"),
+        title_pattern: z.string().min(2).optional().describe("Padrão de título (parcial, case-insensitive)"),
+      },
+      async ({ conv_id, title_pattern }) => {
+        if (!conv_id && !title_pattern) {
+          return { content: [{ type: "text", text: "Fornece conv_id ou title_pattern." }] };
+        }
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/oraculo_fetch`, {
+          method: "POST",
+          headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ conv_id: conv_id ?? null, title_pattern: title_pattern ?? null }),
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          return { content: [{ type: "text", text: `Erro: ${err.substring(0, 2000)}` }] };
+        }
+        return { content: [{ type: "text", text: await parseRpcResponse(res) }] };
+      }
+    );
+
+    // ── 18. conversation_grep — ORÁCULO: busca por palavra-chave exacta ─
+    server.tool(
+      "conversation_grep",
+      "Busca por palavra-chave exacta (não semântica) nas conversas CLAUDIUS, com filtro opcional de datas. Devolve título, data e snippet de 200 caracteres à volta do match, ordenado do mais antigo para o mais recente (útil para 'quando mencionei X pela primeira vez'). Complementa search_conversations (que é semântica/conceptual).",
+      {
+        pattern: z.string().min(2).describe("Palavra ou frase exacta a procurar"),
+        d_from: z.string().datetime().optional().describe("ISO 8601, filtro opcional"),
+        d_to: z.string().datetime().optional().describe("ISO 8601, filtro opcional"),
+      },
+      async ({ pattern, d_from, d_to }) => {
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/oraculo_grep`, {
+          method: "POST",
+          headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ pattern, d_from: d_from ?? null, d_to: d_to ?? null }),
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          return { content: [{ type: "text", text: `Erro: ${err.substring(0, 2000)}` }] };
+        }
+        return { content: [{ type: "text", text: await parseRpcResponse(res) }] };
+      }
+    );
+
   },
   {},
   { basePath: "/api", maxDuration: 60 }
