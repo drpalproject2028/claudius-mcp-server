@@ -35,13 +35,25 @@ const handler = createMcpHandler(
     // ── 1. Estado da sessão ──────────────────────────────────────────────
     server.tool(
       "get_session_state",
-      "Lê o estado actual da sessão CLAUDIUS: pendentes, decisões tomadas, foco actual. Usar quando queres saber onde ficou a última sessão.",
-      {},
-      async () => {
-        const data = await palFetch("/memory?key=current_session_state");
-        return {
-          content: [{ type: "text", text: data.value ?? "Sem estado de sessão guardado." }],
-        };
+      "Lê o estado da(s) sessão(ões) CLAUDIUS mais recente(s) em claudius_session_state: foco, notas, decisões, artefactos e pendentes. Usar quando queres saber onde ficou a última sessão.",
+      {
+        instance: z.string().trim().optional().describe("Filtrar por instância específica (ex: 'claude-code-sonnet'). Omitir para a mais recente de qualquer instância."),
+      },
+      async ({ instance }) => {
+        const filter = instance ? `&instance=eq.${encodeURIComponent(instance)}` : "";
+        const res = await fetch(
+          `${SUPA_URL}/rest/v1/claudius_session_state?select=*&order=updated_at.desc&limit=1${filter}`,
+          { headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` } }
+        );
+        if (!res.ok) {
+          const err = await res.text();
+          return { content: [{ type: "text", text: `Erro: ${err.substring(0, 8000)}` }] };
+        }
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) {
+          return { content: [{ type: "text", text: "Sem estado de sessão guardado." }] };
+        }
+        return { content: [{ type: "text", text: JSON.stringify(rows[0], null, 2).substring(0, 8000) }] };
       }
     );
 
