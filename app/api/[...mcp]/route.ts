@@ -40,20 +40,22 @@ const handler = createMcpHandler(
         instance: z.string().trim().optional().describe("Filtrar por instância específica (ex: 'claude-code-sonnet'). Omitir para a mais recente de qualquer instância."),
       },
       async ({ instance }) => {
-        const filter = instance ? `&instance=eq.${encodeURIComponent(instance)}` : "";
-        const res = await fetch(
-          `${SUPA_URL}/rest/v1/claudius_session_state?select=*&order=updated_at.desc&limit=1${filter}`,
-          { headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}` } }
-        );
+        // claudius_session_state tem RLS só para service_role — leitura via anon
+        // key tem de passar por RPC SECURITY DEFINER, não SELECT directo à tabela.
+        const res = await fetch(`${SUPA_URL}/rest/v1/rpc/claudius_get_session_state`, {
+          method: "POST",
+          headers: { apikey: SUPA_ANON, Authorization: `Bearer ${SUPA_ANON}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ p_instance: instance ?? null }),
+        });
         if (!res.ok) {
           const err = await res.text();
           return { content: [{ type: "text", text: `Erro: ${err.substring(0, 8000)}` }] };
         }
-        const rows = await res.json();
-        if (!Array.isArray(rows) || rows.length === 0) {
+        const row = await res.json();
+        if (!row) {
           return { content: [{ type: "text", text: "Sem estado de sessão guardado." }] };
         }
-        return { content: [{ type: "text", text: JSON.stringify(rows[0], null, 2).substring(0, 8000) }] };
+        return { content: [{ type: "text", text: JSON.stringify(row, null, 2).substring(0, 8000) }] };
       }
     );
 
