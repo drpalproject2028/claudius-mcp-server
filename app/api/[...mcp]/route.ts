@@ -694,7 +694,13 @@ const handler = createMcpHandler(
         });
         if (!res.ok) {
           const err = await res.text();
-          return { content: [{ type: "text", text: `Erro: ${err.substring(0, 4000)}` }] };
+          // FIX 2026-08-02 (achado numa sessão de teste ao vivo): os caminhos
+          // de erro nunca passavam por wrapUntrusted() -- uma mensagem de
+          // erro do Postgres pode ecoar texto fornecido por quem chama (ex:
+          // "duplicate key value violates unique constraint ... Key
+          // (memory_key)=(<o que o chamador enviou>) already exists"), sem
+          // protecção nenhuma. Só os caminhos de sucesso tinham isto.
+          return { content: [{ type: "text", text: wrapUntrusted(`Erro: ${err.substring(0, 4000)}`) }] };
         }
         return { content: [{ type: "text", text: wrapUntrusted(await parseRpcResponse(res)) }] };
       }
@@ -736,7 +742,13 @@ const handler = createMcpHandler(
         });
         if (!res.ok) {
           const err = await res.text();
-          return { content: [{ type: "text", text: `Erro: ${err.substring(0, 4000)}` }] };
+          // FIX 2026-08-02 (achado numa sessão de teste ao vivo): os caminhos
+          // de erro nunca passavam por wrapUntrusted() -- uma mensagem de
+          // erro do Postgres pode ecoar texto fornecido por quem chama (ex:
+          // "duplicate key value violates unique constraint ... Key
+          // (memory_key)=(<o que o chamador enviou>) already exists"), sem
+          // protecção nenhuma. Só os caminhos de sucesso tinham isto.
+          return { content: [{ type: "text", text: wrapUntrusted(`Erro: ${err.substring(0, 4000)}`) }] };
         }
         return { content: [{ type: "text", text: wrapUntrusted(await parseRpcResponse(res)) }] };
       }
@@ -768,7 +780,13 @@ const handler = createMcpHandler(
         });
         if (!res.ok) {
           const err = await res.text();
-          return { content: [{ type: "text", text: `Erro: ${err.substring(0, 4000)}` }] };
+          // FIX 2026-08-02 (achado numa sessão de teste ao vivo): os caminhos
+          // de erro nunca passavam por wrapUntrusted() -- uma mensagem de
+          // erro do Postgres pode ecoar texto fornecido por quem chama (ex:
+          // "duplicate key value violates unique constraint ... Key
+          // (memory_key)=(<o que o chamador enviou>) already exists"), sem
+          // protecção nenhuma. Só os caminhos de sucesso tinham isto.
+          return { content: [{ type: "text", text: wrapUntrusted(`Erro: ${err.substring(0, 4000)}`) }] };
         }
         return { content: [{ type: "text", text: wrapUntrusted(await parseRpcResponse(res)) }] };
       }
