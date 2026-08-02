@@ -1,7 +1,10 @@
 # Memória Tipada Ao Vivo via MCP — Design (v2)
 
-> **Estado**: direcção aprovada após segunda opinião externa (ChatGPT 5). Substitui a
-> v1 (imitação da Memory Tool da Anthropic). Ainda por implementar.
+> **Estado**: implementado e em produção (02/08/2026). Testado ponta-a-ponta com
+> sucesso em Claude Code, claude.ai web, claude.ai iOS e Claude Desktop — o
+> não-objectivo original ("só Claude Code no piloto") não se confirmou na prática:
+> as 3 ferramentas ficam disponíveis em qualquer cliente com o connector "Claudius
+> Admin" ligado, porque vivem no mesmo servidor MCP que já servia esses clientes.
 
 ## Origem e histórico da decisão
 
